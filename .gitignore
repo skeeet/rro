@@ -1,0 +1,13 @@
+/target/
+/dist/
+/reports/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local editor and skill installations are not product sources.
+/.idea/
+/.agents/
+/.claude/
+/.zcode/
+/skills-lock.json

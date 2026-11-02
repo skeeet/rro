@@ -1,0 +1,39 @@
+Third-party notices for ResizeRight Optics CLI
+
+The project code is licensed under the root MIT LICENSE. Rust dependencies
+retain their separate terms; complete dependency license files accompany the
+binary archive. PNG/JPEG use image/png, color conversion uses moxcms, and
+HEIF/HEIC uses the user-selected oxideav-heif and oxideav-h265 Rust crates.
+Resolved versions and any required registry dependencies are pinned in Cargo.lock.
+No libheif, libde265, Kvazaar, or Apple image codec is used by this release.
+
+ResizeRightOptics reference and adapted numerical definitions
+Repository: https://github.com/assafshocher/ResizeRightOptics
+Pinned commit: d96504b79adf13ede8f7392017f3122c774b5c03
+Credit: Assaf Shocher, A Unified Theory of Image Scaling: Point Spread Functions,
+Discrete Kernels, and Scale-Spaces (2026).
+Original sources are not included in this repository or its release archives.
+The original MIT attribution follows separately from the project license.
+
+MIT License
+
+Copyright (c) 2020 Assaf Shocher
+Copyright (c) 2026 Assaf Shocher
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

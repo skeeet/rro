@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/assafshocher/ResizeRightOptics",
+  "commit": "d96504b79adf13ede8f7392017f3122c774b5c03",
+  "license": "MIT",
+  "library_sha256": {
+    "__init__.py": "350aec95870cbd76c9864b7d4bd7ebdf7c2692618cebce8aaf85394b3ae5ce67",
+    "_backend.py": "27a362417d5ae31c0d2109651570ad1871c7a6592c3f316f382d15a916273d2c",
+    "cameras.py": "27c7d386dd373ff55388d9fb806de09b52c34d3178d85ca189d0dd4cd156ba38",
+    "kernels.py": "df93120b1052f7e96cce558cdda9e8e99c865aa887443136c163143ee3f08c3a",
+    "resize_right.py": "34576fa91202690d6c1e2687a6946fd6aafee03c10afcc91f3214ff9322d6ad3"
+  }
+}
