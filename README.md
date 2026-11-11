@@ -5,7 +5,7 @@
 
 ## Install
 
-Extract `rro-0.1.0-darwin-arm64.tar.gz` and run inside the extracted directory:
+Extract `rro-0.1.1-darwin-arm64.tar.gz` and run inside the extracted directory:
 
 ```sh
 sh ./install.sh
@@ -29,7 +29,9 @@ The destination extension selects the output format. Existing outputs require
 
 ## Image and platform limits
 
-- The primary still image is processed, with EXIF orientation applied once.
+- The primary still image is processed, with orientation applied once. PNG/JPEG use
+  valid EXIF orientation first, then XMP TIFF orientation when EXIF orientation is absent
+  or invalid. Output metadata is normalized.
 - Supported SDR images become 8-bit sRGB. PQ/HLG HDR is rejected.
 - PNG keeps alpha only when the input has it. JPEG and HEIC composite transparency onto white.
 - Animation, auxiliary HEIF data, and metadata preservation are outside this version.

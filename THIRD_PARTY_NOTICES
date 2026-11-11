@@ -4,6 +4,7 @@ The project code is licensed under the root MIT LICENSE. Rust dependencies
 retain their separate terms; complete dependency license files accompany the
 binary archive. PNG/JPEG use image/png, color conversion uses moxcms, and
 HEIF/HEIC uses the user-selected oxideav-heif and oxideav-h265 Rust crates.
+XMP orientation parsing uses roxmltree under its MIT OR Apache-2.0 license.
 Resolved versions and any required registry dependencies are pinned in Cargo.lock.
 No libheif, libde265, Kvazaar, or Apple image codec is used by this release.
 

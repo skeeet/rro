@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
-VERSION=0.1.0
+VERSION=0.1.1
 NAME="rro-$VERSION-$PLATFORM-$ARCH"
 if [ "$PLATFORM" = darwin ]; then
     export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"

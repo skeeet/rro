@@ -29,6 +29,8 @@ const MAX_PARAMETER_SET_BYTES: usize = 1024 * 1024;
 const MAX_ICC_PROFILE_BYTES: usize = 16 * 1024 * 1024;
 /// Bound ordinary EXIF metadata independently of the source image area.
 const MAX_EXIF_BYTES: u64 = 1024 * 1024;
+/// Allow up to 1 KiB of PNG iTXt header fields beyond the bounded XMP payload.
+const MAX_PNG_XMP_CHUNK_BYTES: usize = codec_xmp::MAX_XMP_BYTES + 1024;
 /// Bound repeated typed-property cloning across a derived image graph.
 const MAX_ASSOCIATED_PROPERTY_BYTES: usize = 64 * 1024 * 1024;
 /// Ordinary phone image grids fit comfortably within this traversal limit.
@@ -274,7 +276,13 @@ enum PngColor {
     Untagged,
 }
 
-fn png_metadata(bytes: &[u8], max_pixels: usize) -> Result<(PngColor, AlphaChannel), CodecError> {
+struct PngMetadata {
+    color: PngColor,
+    alpha: AlphaChannel,
+    orientation: image::metadata::Orientation,
+}
+
+fn png_metadata(bytes: &[u8], max_pixels: usize) -> Result<PngMetadata, CodecError> {
     let decoder = png::Decoder::new_with_limits(
         Cursor::new(bytes),
         png::Limits {
@@ -283,9 +291,14 @@ fn png_metadata(bytes: &[u8], max_pixels: usize) -> Result<(PngColor, AlphaChann
                 .max(MIN_CODEC_ALLOCATION_BYTES),
         },
     );
-    let reader = decoder
+    let mut reader = decoder
         .read_info()
         .map_err(|e| CodecError::with_source("PNG metadata decoding failed", e))?;
+    // Text metadata may follow IDAT. Read the complete chunk stream without
+    // decoding its pixel raster a second time.
+    reader
+        .finish()
+        .map_err(|error| CodecError::with_source("PNG metadata decoding failed", error))?;
     let info = reader.info();
     dimensions(
         usize::try_from(info.width)?,
@@ -301,26 +314,29 @@ fn png_metadata(bytes: &[u8], max_pixels: usize) -> Result<(PngColor, AlphaChann
     } else {
         AlphaChannel::Absent
     };
+    let orientation = png_orientation(info, bytes)?;
+    let metadata = |color| PngMetadata {
+        color,
+        alpha,
+        orientation,
+    };
     // PNG Third Edition specifies cICP > iCCP > sRGB > cHRM/gAMA.
     if let Some(cicp) = info.coding_independent_code_points {
-        return Ok((
-            PngColor::Cicp([
-                cicp.color_primaries,
-                cicp.transfer_function,
-                cicp.matrix_coefficients,
-                u8::from(cicp.is_video_full_range_image),
-            ]),
-            alpha,
-        ));
+        return Ok(metadata(PngColor::Cicp([
+            cicp.color_primaries,
+            cicp.transfer_function,
+            cicp.matrix_coefficients,
+            u8::from(cicp.is_video_full_range_image),
+        ])));
     }
     if info.icc_profile.is_some() {
-        return Ok((PngColor::Icc, alpha));
+        return Ok(metadata(PngColor::Icc));
     }
     if info.srgb.is_some() {
-        return Ok((PngColor::Srgb, alpha));
+        return Ok(metadata(PngColor::Srgb));
     }
     if info.gama_chunk.is_none() && info.chrm_chunk.is_none() {
-        return Ok((PngColor::Untagged, alpha));
+        return Ok(metadata(PngColor::Untagged));
     }
     let mut profile = ColorProfile::new_srgb();
     if let Some(gamma) = info.gama_chunk {
@@ -362,7 +378,104 @@ fn png_metadata(bytes: &[u8], max_pixels: usize) -> Result<(PngColor, AlphaChann
             },
         );
     }
-    Ok((PngColor::Profile(Box::new(profile)), alpha))
+    Ok(metadata(PngColor::Profile(Box::new(profile))))
+}
+
+fn exif_or_xmp_orientation(
+    decoder: &mut impl ImageDecoder,
+) -> Result<image::metadata::Orientation, CodecError> {
+    let exif = decoder
+        .exif_metadata()
+        .map_err(|error| CodecError::with_source("invalid EXIF metadata", error))?;
+    if let Some(orientation) = exif
+        .as_deref()
+        .and_then(image::metadata::Orientation::from_exif_chunk)
+    {
+        return Ok(orientation);
+    }
+    Ok(decoder
+        .xmp_metadata()
+        .map_err(|error| CodecError::with_source("invalid XMP metadata", error))?
+        .as_deref()
+        .map(codec_xmp::orientation)
+        .transpose()?
+        .flatten()
+        .unwrap_or(image::metadata::Orientation::NoTransforms))
+}
+
+fn check_png_xmp_payloads(bytes: &[u8]) -> Result<(), CodecError> {
+    // The PNG reader has already validated this stream. Its text API only
+    // exposes owned strings, so bound serialized XMP before cloning a chunk.
+    let mut chunks = bytes.get(8..).ok_or("invalid PNG signature")?;
+    while !chunks.is_empty() {
+        let header = chunks.get(..8).ok_or("invalid PNG chunk header")?;
+        let length =
+            usize::try_from(u32::from_be_bytes(header[..4].try_into().map_err(
+                |error| CodecError::with_source("invalid PNG chunk length", error),
+            )?))?;
+        let body_end = 8_usize
+            .checked_add(length)
+            .ok_or("invalid PNG chunk length")?;
+        let body = chunks.get(8..body_end).ok_or("invalid PNG chunk length")?;
+        if &header[4..8] == b"iTXt"
+            && let Some(fields) = body.strip_prefix(b"XML:com.adobe.xmp\0")
+        {
+            // The clone also copies the language tag and translated keyword.
+            if body.len() > MAX_PNG_XMP_CHUNK_BYTES {
+                return Err(CodecError::invalid("PNG XMP chunk exceeds byte limit"));
+            }
+            let text = fields
+                .get(2..)
+                .and_then(|fields| fields.splitn(3, |byte| *byte == 0).nth(2))
+                .ok_or("invalid PNG XMP text fields")?;
+            if text.len() > codec_xmp::MAX_XMP_BYTES {
+                return Err(CodecError::invalid("PNG XMP metadata exceeds byte limit"));
+            }
+        }
+        if &header[4..8] == b"IEND" {
+            break;
+        }
+        let chunk_end = body_end.checked_add(4).ok_or("invalid PNG chunk length")?;
+        chunks = chunks.get(chunk_end..).ok_or("invalid PNG chunk length")?;
+    }
+    Ok(())
+}
+
+fn png_orientation(
+    info: &png::Info<'_>,
+    bytes: &[u8],
+) -> Result<image::metadata::Orientation, CodecError> {
+    if let Some(orientation) = info
+        .exif_metadata
+        .as_deref()
+        .and_then(image::metadata::Orientation::from_exif_chunk)
+    {
+        return Ok(orientation);
+    }
+    check_png_xmp_payloads(bytes)?;
+    let mut orientation = None;
+    let mut remaining = codec_xmp::MAX_XMP_BYTES;
+    for chunk in &info.utf8_text {
+        if chunk.keyword != "XML:com.adobe.xmp" {
+            continue;
+        }
+        let mut chunk = chunk.clone();
+        chunk
+            .decompress_text_with_limit(remaining)
+            .map_err(|error| {
+                CodecError::with_source("invalid or oversized PNG XMP metadata", error)
+            })?;
+        let text = chunk
+            .get_text()
+            .map_err(|error| CodecError::with_source("invalid PNG XMP metadata", error))?;
+        remaining = remaining
+            .checked_sub(text.len())
+            .ok_or("PNG XMP metadata exceeds byte limit")?;
+        if let Some(candidate) = codec_xmp::orientation(text.as_bytes())? {
+            codec_xmp::merge_orientation(&mut orientation, candidate)?;
+        }
+    }
+    Ok(orientation.unwrap_or(image::metadata::Orientation::NoTransforms))
 }
 
 fn apply_png_color(
@@ -471,6 +584,8 @@ fn convert_nclx(image: &mut RgbaImage, primaries: i32, transfer: i32) -> Result<
 }
 #[path = "codec_limits.rs"]
 mod codec_limits;
+#[path = "codec_xmp.rs"]
+mod codec_xmp;
 
 fn heic_threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get().min(MAX_HEIC_THREADS))
@@ -1250,9 +1365,11 @@ pub fn decode(path: &Path, max_pixels: usize) -> Result<RgbaImage, CodecError> {
                 usize::try_from(height)?,
                 max_pixels,
             )?;
-            let orientation = decoder
-                .orientation()
-                .map_err(|e| CodecError::with_source("invalid image orientation", e))?;
+            let orientation = if let Some(metadata) = &png_metadata {
+                metadata.orientation
+            } else {
+                exif_or_xmp_orientation(&mut decoder)?
+            };
             let icc = decoder
                 .icc_profile()
                 .map_err(|e| CodecError::with_source("invalid ICC metadata", e))?;
@@ -1263,10 +1380,10 @@ pub fn decode(path: &Path, max_pixels: usize) -> Result<RgbaImage, CodecError> {
                 image,
                 png_metadata
                     .as_ref()
-                    .map_or(AlphaChannel::Absent, |(_, alpha)| *alpha),
+                    .map_or(AlphaChannel::Absent, |metadata| metadata.alpha),
             )?;
-            if let Some((color, _)) = png_metadata {
-                apply_png_color(&mut result, color, icc)?;
+            if let Some(metadata) = png_metadata {
+                apply_png_color(&mut result, metadata.color, icc)?;
             } else if let Some(profile) = icc {
                 convert_icc(&mut result, &profile)?;
             }

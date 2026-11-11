@@ -380,7 +380,10 @@ fn help_and_version_are_available_without_files() {
         .output()
         .unwrap();
     assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("rro 0.1.0"));
+    assert!(
+        String::from_utf8_lossy(&version.stdout)
+            .contains(concat!("rro ", env!("CARGO_PKG_VERSION")))
+    );
 }
 
 #[test]

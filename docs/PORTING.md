@@ -36,6 +36,9 @@ normal image executable does not invoke it.
 PNG/JPEG use Rust codecs. HEIF/HEVC use the selected OxideAV crates. ICC conversion is
 explicit. Crop, rotation, and mirror transforms are supported; HEIF `iscl` scaling and
 unsupported/HDR payloads fail before output publication. JPEG/HEIC composite onto white.
+PNG/JPEG orientation is resolved before geometry: valid EXIF takes precedence over
+XMP TIFF orientation, including explicit EXIF orientation 1. XMP attribute and element
+forms use namespace-aware parsing with bounded metadata and no external entity resolution.
 
 ## Verification boundaries
 

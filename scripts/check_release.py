@@ -47,6 +47,11 @@ def image_metrics_pass(rows, contract):
         if name.startswith("orientation-png-") and (
                 "output_orientation" not in row or row["output_orientation"] not in (None,1)):
             return False
+        expected_size=contract["image_output_sizes"].get(name)
+        if expected_size is not None and (row.get("output_size")!=expected_size
+                or row.get("output_xmp_present") is not False
+                or row.get("source_unchanged") is not True):
+            return False
         if name.startswith(("png-","alpha-","orientation-png-")):
             if not finite_between(maximum,0,1):
                 return False

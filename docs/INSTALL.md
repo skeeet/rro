@@ -5,8 +5,8 @@
 Extract the Apple Silicon Mac archive and enter its directory:
 
 ```sh
-tar -xzf rro-0.1.0-darwin-arm64.tar.gz
-cd rro-0.1.0-darwin-arm64
+tar -xzf rro-0.1.1-darwin-arm64.tar.gz
+cd rro-0.1.1-darwin-arm64
 sh ./install.sh
 export PATH="$HOME/.local/bin:$PATH"
 rro --version

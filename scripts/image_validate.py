@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Original-Python pixel oracle for complete image conversion (development only).
 Requires Pillow and NumPy. Exercises PNG final quantization, premultiplied alpha,
-white-background lossy output, JPEG/HEIC encode+decode, and EXIF orientations.
+white-background lossy output, JPEG/HEIC encode+decode, and EXIF/XMP orientations.
 """
 import argparse
 import hashlib
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import validate as validation
 import numpy as np
-from PIL import Image as PILImage, ImageOps
+from PIL import Image as PILImage, ImageOps, PngImagePlugin
 
 WORK = ROOT / "reports/work/image-oracle"
 BINARY = ROOT / "target/release/rro"
@@ -109,6 +109,80 @@ def alpha_presence_cases(rgb, opaque, alpha):
             results.append(dict(name=name, passed=score["max_code_difference"] <= 1 and
                                 color_type == (6 if has_alpha else 2),
                                 png_color_type=color_type, **score))
+        except Exception as error:
+            results.append(dict(name=name, passed=False, error=str(error)))
+    return results
+
+
+def oriented_pixels(pixels, orientation):
+    """Independent array-coordinate oracle for the eight TIFF transforms."""
+    transforms = {
+        1: lambda image: image,
+        2: np.fliplr,
+        3: lambda image: np.rot90(image, 2),
+        4: np.flipud,
+        5: lambda image: np.swapaxes(image, 0, 1),
+        6: lambda image: np.rot90(image, -1),
+        7: lambda image: np.flip(np.swapaxes(image, 0, 1), axis=(0, 1)),
+        8: np.rot90,
+    }
+    return transforms[orientation](pixels)
+
+
+def xmp_orientation_cases(rgb):
+    fixtures = [(f"orientation-png-xmp-{value}", value, None, None)
+                for value in range(1, 9)]
+    fixtures += [(f"orientation-png-xmp-{value}-{axis}", value, None, axis)
+                 for value in (6, 8) for axis in ("width", "height")]
+    fixtures += [(f"orientation-png-exif-{value}-over-xmp-8", 8, value, None)
+                 for value in (1, 6)]
+    results = []
+    for name, xmp_orientation, exif_orientation, axis in fixtures:
+        source = WORK / f"{name}-input.png"
+        destination = WORK / f"{name}-output.png"
+        description = ('<rdf:Description xmlns:tiff="http://ns.adobe.com/tiff/1.0/" '
+                       f'tiff:Orientation="{xmp_orientation}"/>' if xmp_orientation % 2 else
+                       '<rdf:Description xmlns:tiff="http://ns.adobe.com/tiff/1.0/">'
+                       f'<tiff:Orientation>{xmp_orientation}</tiff:Orientation></rdf:Description>')
+        xmp = ('<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+               '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+               f'{description}</rdf:RDF></x:xmpmeta>')
+        metadata = PngImagePlugin.PngInfo()
+        metadata.add_itxt("XML:com.adobe.xmp", xmp)
+        save_options = dict(pnginfo=metadata)
+        if exif_orientation is not None:
+            exif = PILImage.Exif()
+            exif[274] = exif_orientation
+            save_options["exif"] = exif
+        PILImage.fromarray(rgb).save(source, **save_options)
+        before = hashlib.sha256(source.read_bytes()).hexdigest()
+        try:
+            expected = oriented_pixels(rgb, exif_orientation or xmp_orientation)
+            flags = ["--scale", "1"]
+            if axis is not None:
+                height, width = expected.shape[:2]
+                scale = 31 / (width if axis == "width" else height)
+                output_width = 31 if axis == "width" else max(1, math.ceil(width * scale - 8 * math.ulp(width * scale)))
+                output_height = 31 if axis == "height" else max(1, math.ceil(height * scale - 8 * math.ulp(height * scale)))
+                expected = quantize(validation.original(expected.astype(np.float64) / 255,
+                                    dict(scale_x=scale, scale_y=scale,
+                                         width=output_width, height=output_height)))
+                flags = [f"--{axis}", "31"]
+            invoke(source, destination, *flags, "--force")
+            with PILImage.open(destination) as image:
+                actual = np.asarray(image.convert("RGB"))
+                output_orientation = image.getexif().get(274)
+                output_xmp_present = any(key in image.info for key in ("xmp", "XML:com.adobe.xmp"))
+                output_size = list(image.size)
+            score = metrics(actual, expected)
+            color_type = png_color_type(destination)
+            source_unchanged = hashlib.sha256(source.read_bytes()).hexdigest() == before
+            results.append(dict(name=name, passed=score["max_code_difference"] <= 1 and
+                                color_type == 2 and output_orientation in (None, 1) and
+                                not output_xmp_present and source_unchanged,
+                                png_color_type=color_type, output_orientation=output_orientation,
+                                output_xmp_present=output_xmp_present, output_size=output_size,
+                                source_unchanged=source_unchanged, **score))
         except Exception as error:
             results.append(dict(name=name, passed=False, error=str(error)))
     return results
@@ -231,6 +305,7 @@ def main():
                                 png_color_type=color_type,output_orientation=output_orientation,**score))
         except Exception as error:
             results.append(dict(name=f"orientation-png-{orientation}",passed=False,error=str(error)))
+    results.extend(xmp_orientation_cases(rgb))
     report=dict(date_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),binary_sha256=initial_binary_hash,
                 binary_unchanged_during_checks=hashlib.sha256(BINARY.read_bytes()).hexdigest()==initial_binary_hash,
                 original_commit=validation.PIN,reference_sha256=validation.REFERENCE_HASHES,numpy=np.__version__,

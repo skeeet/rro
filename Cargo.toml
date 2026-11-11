@@ -1,6 +1,6 @@
 [package]
 name = "rro"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -19,6 +19,7 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 moxcms = "0.8.1"
 png = "0.18.1"
 same-file = "1.0.6"
+roxmltree = "0.21.2"
 oxideav-heif = { version = "=0.0.13", default-features = false, features = ["registry"] }
 oxideav-h265 = "=0.0.15"
 

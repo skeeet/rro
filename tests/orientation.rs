@@ -16,6 +16,12 @@ enum ByteOrder {
     Big,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum XmpCompression {
+    Plain,
+    Deflate,
+}
+
 fn workspace() -> tempfile::TempDir {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("reports/work");
     fs::create_dir_all(&root).expect("orientation workspace is writable");
@@ -52,12 +58,26 @@ fn tiff(orientation: u8, byte_order: ByteOrder) -> Vec<u8> {
 }
 
 fn write_png(path: &Path, exif: Option<Vec<u8>>) {
+    write_png_metadata(path, exif, None, XmpCompression::Plain);
+}
+
+fn write_png_metadata(
+    path: &Path,
+    exif: Option<Vec<u8>>,
+    xmp: Option<&str>,
+    compressed: XmpCompression,
+) {
     let mut info = png::Info::with_size(
         u32::try_from(WIDTH).expect("fixture width fits u32"),
         u32::try_from(HEIGHT).expect("fixture height fits u32"),
     );
     info.color_type = png::ColorType::Rgb;
     info.exif_metadata = exif.map(Into::into);
+    if let Some(xmp) = xmp {
+        let mut chunk = png::text_metadata::ITXtChunk::new("XML:com.adobe.xmp", xmp);
+        chunk.compressed = matches!(compressed, XmpCompression::Deflate);
+        info.utf8_text.push(chunk);
+    }
     let mut writer = png::Encoder::with_info(File::create(path).expect("create PNG fixture"), info)
         .expect("valid PNG fixture metadata")
         .write_header()
@@ -154,6 +174,10 @@ fn assert_normalized_png(path: &Path, expected: &RgbaImage) {
     assert!(
         decoder.exif_metadata().expect("read output EXIF").is_none(),
         "normalized output must not carry stale orientation"
+    );
+    assert!(
+        decoder.xmp_metadata().expect("read output XMP").is_none(),
+        "normalized output must omit stale XMP"
     );
     assert_eq!(
         codec::decode(path, WIDTH * HEIGHT).expect("decode normalized PNG"),
@@ -323,5 +347,268 @@ fn requested_width_uses_display_dimensions_after_rotation() {
             "width must apply to rotated display dimensions for {}",
             source.display()
         );
+    }
+}
+
+fn xmp_attribute(value: &str) -> String {
+    format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:tiff="http://ns.adobe.com/tiff/1.0/" tiff:Orientation="{value}"/></rdf:RDF></x:xmpmeta>"#
+    )
+}
+
+#[test]
+fn png_xmp_all_eight_orientations_normalize_once() {
+    let work = workspace();
+    let baseline_path = work.path().join("baseline.png");
+    write_png(&baseline_path, None);
+    let baseline = codec::decode(&baseline_path, WIDTH * HEIGHT).expect("decode baseline");
+    for orientation in 1..=8 {
+        for compressed in [XmpCompression::Plain, XmpCompression::Deflate] {
+            let source = work
+                .path()
+                .join(format!("xmp-{orientation}-{compressed:?}.png"));
+            write_png_metadata(
+                &source,
+                None,
+                Some(&xmp_attribute(&orientation.to_string())),
+                compressed,
+            );
+            let actual = codec::decode(&source, WIDTH * HEIGHT).expect("decode XMP input");
+            assert_oriented(&actual, &baseline, orientation);
+            let output = source.with_extension("normalized.png");
+            cli(&source, &output, &["--scale", "1"]);
+            assert_normalized_png(&output, &actual);
+        }
+    }
+}
+
+#[test]
+fn png_valid_exif_including_identity_wins_over_xmp() {
+    let work = workspace();
+    let baseline_path = work.path().join("baseline.png");
+    write_png(&baseline_path, None);
+    let baseline = codec::decode(&baseline_path, WIDTH * HEIGHT).expect("decode baseline");
+    for orientation in 1..=8 {
+        for xmp in [
+            xmp_attribute("6"),
+            xmp_attribute(&orientation.to_string()),
+            "<malformed".to_owned(),
+        ] {
+            let source = work.path().join("input.png");
+            write_png_metadata(
+                &source,
+                Some(tiff(orientation, ByteOrder::Little)),
+                Some(&xmp),
+                XmpCompression::Plain,
+            );
+            let actual =
+                codec::decode(&source, WIDTH * HEIGHT).expect("valid EXIF suppresses XMP parsing");
+            assert_oriented(&actual, &baseline, orientation);
+        }
+    }
+}
+
+#[test]
+fn png_xmp_single_axis_resize_uses_display_dimensions() {
+    let work = workspace();
+    for orientation in [6, 8] {
+        let source = work.path().join(format!("input-{orientation}.png"));
+        write_png_metadata(
+            &source,
+            None,
+            Some(&xmp_attribute(&orientation.to_string())),
+            XmpCompression::Plain,
+        );
+        for (flag, value, expected) in [("--width", "24", (24, 36)), ("--height", "24", (16, 24))] {
+            let output = work.path().join(format!("output-{orientation}-{flag}.png"));
+            cli(&source, &output, &[flag, value]);
+            let actual = codec::decode(&output, 24 * 36).expect("decode resized XMP fixture");
+            assert_eq!(
+                (actual.width, actual.height),
+                expected,
+                "orientation {orientation}, {flag}"
+            );
+        }
+    }
+}
+
+#[test]
+fn png_xmp_namespace_elements_and_invalid_values() {
+    let work = workspace();
+    let baseline_path = work.path().join("baseline.png");
+    write_png(&baseline_path, None);
+    let baseline = codec::decode(&baseline_path, WIDTH * HEIGHT).expect("decode baseline");
+    let cases = [
+        (r#"<root xmlns:photo="http://ns.adobe.com/tiff/1.0/"><photo:Orientation> 6 </photo:Orientation></root>"#.to_owned(), 6),
+        (r#"<root><Orientation xmlns="http://ns.adobe.com/tiff/1.0/">&#56;</Orientation></root>"#.to_owned(), 8),
+        (r#"<root xmlns:photo="http://ns.adobe.com/tiff/1.0/" photo:Orientation="&#54;"/>"#.to_owned(), 6),
+        (r#"<root xmlns:tiff="http://example.invalid/" tiff:Orientation="6"/>"#.to_owned(), 1),
+        (r#"<root Orientation="6"/>"#.to_owned(), 1),
+        (r"<root><!-- <tiff:Orientation>6</tiff:Orientation> --></root>".to_owned(), 1),
+        (xmp_attribute("0"), 1), (xmp_attribute("9"), 1),
+        (xmp_attribute("-1"), 1), (xmp_attribute("6.0"), 1),
+        (xmp_attribute("garbage"), 1),
+        (r#"<root xmlns:tiff="http://ns.adobe.com/tiff/1.0/"><tiff:Orientation><!-- note -->6</tiff:Orientation></root>"#.to_owned(), 6),
+        (r#"<root xmlns:tiff="http://ns.adobe.com/tiff/1.0/"><tiff:Orientation>6<!-- note --></tiff:Orientation></root>"#.to_owned(), 6),
+        (r#"<root xmlns:tiff="http://ns.adobe.com/tiff/1.0/"><tiff:Orientation>6<!-- split -->8</tiff:Orientation></root>"#.to_owned(), 1),
+    ];
+    for (index, (xmp, orientation)) in cases.into_iter().enumerate() {
+        let source = work.path().join(format!("case-{index}.png"));
+        write_png_metadata(&source, None, Some(&xmp), XmpCompression::Plain);
+        let actual = codec::decode(&source, WIDTH * HEIGHT).expect("decode valid XMP packet");
+        assert_oriented(&actual, &baseline, orientation);
+    }
+    for exif in [Some(tiff(0, ByteOrder::Little)), Some(vec![0, 1, 2, 3])] {
+        let source = work.path().join("invalid-exif.png");
+        write_png_metadata(
+            &source,
+            exif,
+            Some(&xmp_attribute("6")),
+            XmpCompression::Plain,
+        );
+        let actual =
+            codec::decode(&source, WIDTH * HEIGHT).expect("XMP fallback with invalid EXIF");
+        assert_oriented(&actual, &baseline, 6);
+    }
+}
+
+#[test]
+fn png_xmp_rejects_malformed_conflicting_and_oversized_metadata() {
+    let work = workspace();
+    let packets = [
+        "<unclosed".to_owned(),
+        r#"<!DOCTYPE root [<!ENTITY orientation "6">]><root xmlns:tiff="http://ns.adobe.com/tiff/1.0/" tiff:Orientation="&orientation;"/>"#.to_owned(),
+        r#"<root xmlns:tiff="http://ns.adobe.com/tiff/1.0/" tiff:Orientation="6"><tiff:Orientation>8</tiff:Orientation></root>"#.to_owned(),
+        format!("<root>{}</root>", " ".repeat(1024 * 1024)),
+        format!("<root>{}</root>", "<node/>".repeat(16_384)),
+    ];
+    for (index, xmp) in packets.into_iter().enumerate() {
+        for compressed in [XmpCompression::Plain, XmpCompression::Deflate] {
+            let source = work.path().join(format!("bad-{index}-{compressed:?}.png"));
+            write_png_metadata(&source, None, Some(&xmp), compressed);
+            let error =
+                codec::decode(&source, 1024 * 1024).expect_err("invalid XMP must fail clearly");
+            assert!(
+                error.to_string().contains("XMP"),
+                "XMP context missing: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn png_xmp_after_pixels_is_honored() {
+    let work = workspace();
+    let baseline_path = work.path().join("baseline.png");
+    write_png(&baseline_path, None);
+    let baseline = codec::decode(&baseline_path, WIDTH * HEIGHT).expect("decode baseline");
+    let source = work.path().join("trailing-xmp.png");
+    let mut encoder = png::Encoder::new(
+        File::create(&source).expect("create trailing XMP fixture"),
+        12,
+        8,
+    );
+    encoder.set_color(png::ColorType::Rgb);
+    let mut writer = encoder.write_header().expect("write PNG header");
+    writer.write_image_data(&pixels()).expect("write pixels");
+    writer
+        .write_text_chunk(&png::text_metadata::ITXtChunk::new(
+            "XML:com.adobe.xmp",
+            xmp_attribute("6"),
+        ))
+        .expect("write trailing XMP");
+    writer.finish().expect("finish trailing XMP PNG");
+    let actual = codec::decode(&source, WIDTH * HEIGHT).expect("decode trailing XMP");
+    assert_oriented(&actual, &baseline, 6);
+}
+
+fn write_jpeg_xmp(path: &Path, bytes: &[u8], xmp: &str) {
+    let mut payload = b"http://ns.adobe.com/xap/1.0/\0".to_vec();
+    payload.extend_from_slice(xmp.as_bytes());
+    let mut output = bytes[..2].to_vec();
+    output.extend_from_slice(&[0xff, 0xe1]);
+    output.extend_from_slice(
+        &u16::try_from(payload.len() + 2)
+            .expect("APP1 fits u16")
+            .to_be_bytes(),
+    );
+    output.extend(payload);
+    output.extend_from_slice(&bytes[2..]);
+    fs::write(path, output).expect("write JPEG XMP fixture");
+}
+
+#[test]
+fn jpeg_xmp_fallback_and_exif_precedence() {
+    let work = workspace();
+    let jpeg = jpeg_bytes();
+    let baseline_path = work.path().join("baseline.jpg");
+    fs::write(&baseline_path, &jpeg).expect("write baseline JPEG");
+    let baseline = codec::decode(&baseline_path, WIDTH * HEIGHT).expect("decode baseline JPEG");
+    for orientation in 1..=8 {
+        let source = work.path().join(format!("xmp-{orientation}.jpg"));
+        write_jpeg_xmp(&source, &jpeg, &xmp_attribute(&orientation.to_string()));
+        let actual = codec::decode(&source, WIDTH * HEIGHT).expect("decode JPEG XMP fallback");
+        assert_oriented(&actual, &baseline, orientation);
+    }
+    for orientation in [1, 6, 8] {
+        let exif_path = work.path().join("exif.jpg");
+        write_jpeg(&exif_path, &jpeg, orientation, ByteOrder::Little);
+        let source = work.path().join("both.jpg");
+        write_jpeg_xmp(
+            &source,
+            &fs::read(&exif_path).expect("read EXIF JPEG"),
+            &xmp_attribute("8"),
+        );
+        let actual = codec::decode(&source, WIDTH * HEIGHT).expect("decode JPEG EXIF precedence");
+        assert_oriented(&actual, &baseline, orientation);
+    }
+}
+
+#[test]
+fn png_xmp_header_fields_are_bounded_after_exif_precedence() {
+    let work = workspace();
+    let baseline_path = work.path().join("baseline.png");
+    write_png(&baseline_path, None);
+    let baseline = codec::decode(&baseline_path, WIDTH * HEIGHT).expect("decode baseline");
+    for field in ["language", "translated"] {
+        for orientation in [None, Some(6)] {
+            let source = work.path().join(format!("{field}-{orientation:?}.png"));
+            let mut info = png::Info::with_size(12, 8);
+            info.color_type = png::ColorType::Rgb;
+            info.exif_metadata = orientation.map(|value| tiff(value, ByteOrder::Little).into());
+            let mut chunk =
+                png::text_metadata::ITXtChunk::new("XML:com.adobe.xmp", xmp_attribute("8"));
+            if field == "language" {
+                chunk.language_tag = "a".repeat(2 * 1024 * 1024);
+            } else {
+                chunk.translated_keyword = "a".repeat(2 * 1024 * 1024);
+            }
+            info.utf8_text.push(chunk);
+            let mut writer = png::Encoder::with_info(
+                File::create(&source).expect("create large header fixture"),
+                info,
+            )
+            .expect("valid fixture header")
+            .write_header()
+            .expect("write fixture header");
+            writer
+                .write_image_data(&pixels())
+                .expect("write fixture pixels");
+            writer.finish().expect("finish large header fixture");
+            let result = codec::decode(&source, 1024 * 1024);
+            if let Some(orientation) = orientation {
+                assert_oriented(
+                    &result.expect("valid EXIF bypasses unused XMP bounds"),
+                    &baseline,
+                    orientation,
+                );
+            } else {
+                let error = result.expect_err("oversized XMP header must fail before cloning");
+                assert!(
+                    error.to_string().contains("XMP"),
+                    "missing XMP error context: {error}"
+                );
+            }
+        }
     }
 }

@@ -242,7 +242,21 @@
     "orientation-png-5",
     "orientation-png-6",
     "orientation-png-7",
-    "orientation-png-8"
+    "orientation-png-8",
+    "orientation-png-xmp-1",
+    "orientation-png-xmp-2",
+    "orientation-png-xmp-3",
+    "orientation-png-xmp-4",
+    "orientation-png-xmp-5",
+    "orientation-png-xmp-6",
+    "orientation-png-xmp-7",
+    "orientation-png-xmp-8",
+    "orientation-png-xmp-6-width",
+    "orientation-png-xmp-6-height",
+    "orientation-png-xmp-8-width",
+    "orientation-png-xmp-8-height",
+    "orientation-png-exif-1-over-xmp-8",
+    "orientation-png-exif-6-over-xmp-8"
   ],
   "randomized_case_numbers": [
     0,
@@ -518,6 +532,78 @@
     "orientation-png-5": 2,
     "orientation-png-6": 2,
     "orientation-png-7": 2,
-    "orientation-png-8": 2
+    "orientation-png-8": 2,
+    "orientation-png-xmp-1": 2,
+    "orientation-png-xmp-2": 2,
+    "orientation-png-xmp-3": 2,
+    "orientation-png-xmp-4": 2,
+    "orientation-png-xmp-5": 2,
+    "orientation-png-xmp-6": 2,
+    "orientation-png-xmp-7": 2,
+    "orientation-png-xmp-8": 2,
+    "orientation-png-xmp-6-width": 2,
+    "orientation-png-xmp-6-height": 2,
+    "orientation-png-xmp-8-width": 2,
+    "orientation-png-xmp-8-height": 2,
+    "orientation-png-exif-1-over-xmp-8": 2,
+    "orientation-png-exif-6-over-xmp-8": 2
+  },
+  "image_output_sizes": {
+    "orientation-png-xmp-1": [
+      61,
+      43
+    ],
+    "orientation-png-xmp-2": [
+      61,
+      43
+    ],
+    "orientation-png-xmp-3": [
+      61,
+      43
+    ],
+    "orientation-png-xmp-4": [
+      61,
+      43
+    ],
+    "orientation-png-xmp-5": [
+      43,
+      61
+    ],
+    "orientation-png-xmp-6": [
+      43,
+      61
+    ],
+    "orientation-png-xmp-7": [
+      43,
+      61
+    ],
+    "orientation-png-xmp-8": [
+      43,
+      61
+    ],
+    "orientation-png-xmp-6-width": [
+      31,
+      44
+    ],
+    "orientation-png-xmp-6-height": [
+      22,
+      31
+    ],
+    "orientation-png-xmp-8-width": [
+      31,
+      44
+    ],
+    "orientation-png-xmp-8-height": [
+      22,
+      31
+    ],
+    "orientation-png-exif-1-over-xmp-8": [
+      61,
+      43
+    ],
+    "orientation-png-exif-6-over-xmp-8": [
+      43,
+      61
+    ]
   }
 }
